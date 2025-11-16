@@ -11,7 +11,7 @@ export async function handleWebhook(payload, env) {
   
   // Note: Leverage should be pre-configured in user's Gate.io account
   
-  console.log(`Processing futures webhook: ${action} ${amount} BTC on ${symbol}`);
+  console.log(`Processing futures webhook: ${action} with ${amount}% allocation on ${symbol}`);
   
   // Check if we're in test mode
   const isTestMode = env.TEST_MODE === 'true';

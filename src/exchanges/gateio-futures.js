@@ -99,6 +99,8 @@ export class GateIOFuturesTrader {
       body: method !== 'GET' ? payload : undefined
     };
 
+    console.log(`[API] ${method} ${endpoint}${queryParams ? '?' + queryParams : ''}`);
+
     try {
       const response = await fetch(url, options);
       let result = null;
@@ -109,20 +111,21 @@ export class GateIOFuturesTrader {
           try {
             result = JSON.parse(text);
           } catch (parseError) {
-            console.warn(`Failed to parse JSON response from ${endpoint}: ${parseError.message}`);
+            console.warn(`[API] Failed to parse JSON response from ${endpoint}: ${parseError.message}`);
             result = text;
           }
         }
       }
       
       if (!response.ok) {
-        console.error('Gate.io Futures API error:', result);
-        throw new Error(`Gate.io Futures API error: ${result?.message || result?.label || JSON.stringify(result)}`);
+        console.error(`[API] Error ${response.status} on ${method} ${endpoint}:`, result);
+        throw new Error(`Gate.io API error (${response.status}): ${result?.message || result?.label || JSON.stringify(result)}`);
       }
       
+      console.log(`[API] Success ${method} ${endpoint} - Status: ${response.status}`);
       return result;
     } catch (error) {
-      console.error('Request failed:', error);
+      console.error(`[API] Request failed ${method} ${endpoint}:`, error.message);
       throw error;
     }
   }
@@ -178,6 +181,35 @@ export class GateIOFuturesTrader {
         return value;
       }
     }
+    return 0;
+  }
+
+  /**
+   * Extract available balance from margin account (quote currency - typically USDT)
+   * Margin account structure: { base: {...}, quote: { available, locked, ... }, ... }
+   */
+  extractMarginAvailableBalance(marginAccount = {}) {
+    if (!marginAccount || typeof marginAccount !== 'object') {
+      return 0;
+    }
+
+    // For futures trading, we use the quote currency (USDT)
+    if (marginAccount.quote && typeof marginAccount.quote === 'object') {
+      const available = this.parseNumber(marginAccount.quote.available);
+      if (available > 0) {
+        return available;
+      }
+    }
+
+    // Fallback: try direct fields
+    const candidateFields = ['available', 'available_balance', 'balance'];
+    for (const field of candidateFields) {
+      const value = this.parseNumber(marginAccount[field]);
+      if (value > 0) {
+        return value;
+      }
+    }
+
     return 0;
   }
 
@@ -272,10 +304,11 @@ export class GateIOFuturesTrader {
       const result = await this.request('GET', endpoint);
       const parsed = tryParseResult(result);
       if (parsed) {
+        console.log(`[ACCOUNT] Contract account found for ${contract}`);
         return parsed;
       }
     } catch (error) {
-      console.warn(`Contract account fetch failed for ${contract}: ${error.message}`);
+      console.warn(`[ACCOUNT] Contract-specific fetch failed for ${contract}: ${error.message}`);
     }
 
     // Fallback to list endpoint filtered by contract
@@ -285,12 +318,14 @@ export class GateIOFuturesTrader {
       const result = await this.request('GET', endpoint, null, params);
       const parsed = tryParseResult(result);
       if (parsed) {
+        console.log(`[ACCOUNT] Contract account found for ${contract} via list endpoint`);
         return parsed;
       }
     } catch (error) {
-      console.warn(`Contract account list fetch failed for ${contract}: ${error.message}`);
+      console.warn(`[ACCOUNT] Contract list fetch failed for ${contract}: ${error.message}`);
     }
 
+    console.warn(`[ACCOUNT] No contract account found for ${contract}`);
     return null;
   }
 
@@ -307,16 +342,23 @@ export class GateIOFuturesTrader {
       const result = await this.request('GET', endpoint, null, params);
 
       if (Array.isArray(result)) {
-        return result.find(item => item?.currency_pair === currencyPair) || result[0] || null;
+        const found = result.find(item => item?.currency_pair === currencyPair) || result[0] || null;
+        if (found) {
+          console.log(`[MARGIN] Account found for ${currencyPair}`);
+        }
+        return found;
       }
 
       if (result && (result.currency_pair === currencyPair || !result.currency_pair)) {
+        console.log(`[MARGIN] Account found for ${currencyPair}`);
+        console.log(result);
         return result;
       }
     } catch (error) {
-      console.warn(`Margin account fetch failed for ${currencyPair}: ${error.message}`);
+      console.warn(`[MARGIN] Account fetch failed for ${currencyPair}: ${error.message}`);
     }
 
+    console.warn(`[MARGIN] No margin account found for ${currencyPair}`);
     return null;
   }
 
@@ -326,32 +368,25 @@ export class GateIOFuturesTrader {
    */
   async calculateContractsFromPercentage(symbol, amount, side = 'long') {
     const percentage = this.normalizePercentage(amount);
-    const account = await this.getBalance();
-    const availableBalance = this.extractAvailableBalance(account);
-    const accountLeverage = this.extractAccountLeverage(account);
-    const contractAccount = await this.getAccountForContract(symbol);
-    const contractLeverage = this.extractAccountLeverage(contractAccount);
+    
+    // Fetch margin account for both balance and leverage
     const marginAccount = await this.getMarginAccount(symbol);
     const marginLeverage = this.extractAccountLeverage(marginAccount);
-
-    const fallbackCandidate =
-      (marginLeverage && { value: marginLeverage, source: 'margin' }) ||
-      (contractLeverage && { value: contractLeverage, source: 'contract' }) ||
-      (accountLeverage && { value: accountLeverage, source: 'account' }) ||
-      null;
-
-    const fallbackLeverage = fallbackCandidate?.value || null;
-    const fallbackSource = fallbackCandidate?.source || null;
+    const marginBalance = this.extractMarginAvailableBalance(marginAccount);
 
     console.log(
-      `[GateIO] Account available (${this.settle.toUpperCase()}): ${availableBalance}. ` +
-      `Requested allocation: ${(percentage * 100).toFixed(2)}% for ${symbol} (${side}). ` +
-      `Margin leverage: ${marginLeverage ?? 'n/a'}, Contract leverage: ${contractLeverage ?? 'n/a'}, Account leverage: ${accountLeverage ?? 'n/a'}.`
+      `[CALCULATE] Symbol: ${symbol} | Side: ${side} | Allocation: ${(percentage * 100).toFixed(2)}% | ` +
+      `Margin Balance: ${marginBalance} ${this.settle.toUpperCase()} | Leverage: ${marginLeverage ?? 'n/a'}x`
     );
     
-    if (availableBalance <= 0) {
-      throw new Error('No available balance to open a new position');
+    if (marginBalance <= 0) {
+      console.error(`[CALCULATE] No margin balance available for ${symbol}`);
+      throw new Error('No available margin balance. Please transfer funds to your margin account for this symbol.');
     }
+
+    // Determine leverage (try margin first, then fallback to default)
+    const fallbackLeverage = marginLeverage || null;
+    const fallbackSource = marginLeverage ? 'margin' : null;
 
     const contract = this.parseSymbol(symbol);
     const contractInfo = await this.getContract(symbol);
@@ -381,17 +416,23 @@ export class GateIOFuturesTrader {
     );
     const positionMode = this.determinePositionMode(position);
 
-    console.log(
-      `[GateIO] Using leverage ${leverage}x for ${symbol} (${side}) [source: ${leverageSource}]`
-    );
-
-    const notionalToAllocate = percentage * availableBalance * leverage;
+    const notionalToAllocate = percentage * marginBalance * leverage;
     const baseAmount = notionalToAllocate / markPrice;
     const rawContracts = baseAmount / contractSize;
     const contracts = Math.floor(rawContracts);
 
+    console.log(
+      `[CALCULATE] Contract: ${contract} | Leverage: ${leverage}x (${leverageSource}) | ` +
+      `Mode: ${positionMode} | Mark Price: ${markPrice} | Contract Size: ${contractSize}`
+    );
+    console.log(
+      `[CALCULATE] Notional: ${notionalToAllocate.toFixed(2)} ${this.settle.toUpperCase()} | ` +
+      `Base Amount: ${baseAmount.toFixed(6)} | Contracts: ${contracts}`
+    );
+
     if (!contracts || contracts <= 0) {
-      throw new Error('Calculated order size is zero. Increase percentage or ensure sufficient balance.');
+      console.error(`[CALCULATE] Calculated contracts is zero for ${symbol}`);
+      throw new Error('Calculated order size is zero. Increase percentage or ensure sufficient margin balance.');
     }
 
     return {
@@ -576,12 +617,6 @@ export class GateIOFuturesTrader {
     const { contract, contracts, positionMode, markPrice, notionalToAllocate, baseAmount, leverage, leverageSource, percentage } =
       await this.calculateContractsFromPercentage(symbol, amount, 'long');
 
-    console.log(
-      `Opening long on ${contract}: ${contracts} contracts (~${baseAmount.toFixed(6)} base) ` +
-      `allocating ${(percentage * 100).toFixed(2)}% (${notionalToAllocate.toFixed(2)} ${this.settle.toUpperCase()}) ` +
-      `@ mark ${markPrice} (leverage ${leverage}x from ${leverageSource}, ${positionMode} mode)`
-    );
-
     const order = {
       contract: contract,
       size: contracts,
@@ -590,11 +625,20 @@ export class GateIOFuturesTrader {
       text: 't-long-entry', // Gate.io requires text to start with 't-'
       reduce_only: false
     };
+
+    console.log(
+      `[ORDER] LONG ENTRY | Contract: ${contract} | Size: ${contracts} | ` +
+      `Notional: ${notionalToAllocate.toFixed(2)} ${this.settle.toUpperCase()} | ` +
+      `Mark: ${markPrice} | Leverage: ${leverage}x | Mode: ${positionMode}`
+    );
     
     try {
       const endpoint = `/api/v4/futures/${this.settle}/orders`;
-      return await this.request('POST', endpoint, order);
+      const result = await this.request('POST', endpoint, order);
+      console.log(`[ORDER] LONG ENTRY SUCCESS | Order ID: ${result?.id || 'unknown'}`);
+      return result;
     } catch (error) {
+      console.error(`[ORDER] LONG ENTRY FAILED | ${error.message}`);
       throw new Error(`Market buy (long entry) failed: ${error.message}`);
     }
   }
@@ -612,8 +656,13 @@ export class GateIOFuturesTrader {
       const isDualMode = mode === 'dual_long_short';
       const longSize = this.getSideSize(position, 'long');
 
+      console.log(
+        `[ORDER] LONG EXIT | Contract: ${contract} | Current Position: ${longSize} | ` +
+        `Requested: ${requestedContracts} | Mode: ${mode || 'N/A'}`
+      );
+
       if (!position || longSize <= 0) {
-        console.log('No long position to close');
+        console.warn(`[ORDER] No long position to close for ${contract}`);
         return {
           status: 'no_position',
           message: 'No long position to close'
@@ -621,59 +670,47 @@ export class GateIOFuturesTrader {
       }
 
       if (!requestedContracts || requestedContracts <= 0) {
+        console.warn(`[ORDER] Requested close size too small for ${contract}`);
         return {
           status: 'no_action',
           message: 'Requested close size is below minimum contract size'
         };
       }
-
-      console.log(`Position mode: ${isDualMode ? 'Dual (全仓)' : 'Single'} (source: ${mode || 'config'})`);
       
       let order;
+      let sizeToClose;
       
       if (isDualMode) {
-        // In dual mode, we need to place a counter order with reduce_only=true
-        if (longSize <= 0) {
-          return {
-            status: 'no_position',
-            message: 'No long position to close'
-          };
-        }
-        
-        // Use the smaller of contractsToClose or actual position size
-        const sizeToClose = Math.min(requestedContracts, Math.abs(longSize));
-        
+        sizeToClose = Math.min(requestedContracts, Math.abs(longSize));
         order = {
           contract: contract,
           size: -sizeToClose, // Negative for sell
           price: '0', // Market order
           tif: 'ioc',
           text: 't-long-exit',
-          reduce_only: true  // Important: reduce position only
+          reduce_only: true
         };
-        console.log(`Dual mode: Closing ${sizeToClose} contracts of long position`);
       } else {
-        // In single position mode, partial close with specific size
+        sizeToClose = requestedContracts;
         order = {
           contract: contract,
           size: -requestedContracts,  // Negative for sell
           price: '0', // Market order
           tif: 'ioc',
           text: 't-long-exit',
-          reduce_only: true  // Use reduce_only for partial close
+          reduce_only: true
         };
-        console.log(`Single mode: Closing ${requestedContracts} contracts`);
       }
-      
-      console.log('Closing long position with order:', order);
+
+      console.log(`[ORDER] Closing ${sizeToClose} contracts (${isDualMode ? 'Dual' : 'Single'} mode)`);
       
       const endpoint = `/api/v4/futures/${this.settle}/orders`;
       const result = await this.request('POST', endpoint, order);
       
-      console.log('Close order result:', result);
+      console.log(`[ORDER] LONG EXIT SUCCESS | Order ID: ${result?.id || 'unknown'} | Size: ${sizeToClose}`);
       return result;
     } catch (error) {
-      console.error('Close order error:', error.message);
+      console.error(`[ORDER] LONG EXIT FAILED | ${contract}: ${error.message}`);
       throw new Error(`Market sell (long exit) failed: ${error.message}`);
     }
   }
@@ -685,12 +722,6 @@ export class GateIOFuturesTrader {
     const { contract, contracts, positionMode, markPrice, notionalToAllocate, baseAmount, leverage, leverageSource, percentage } =
       await this.calculateContractsFromPercentage(symbol, amount, 'short');
 
-    console.log(
-      `Opening short on ${contract}: ${contracts} contracts (~${baseAmount.toFixed(6)} base) ` +
-      `allocating ${(percentage * 100).toFixed(2)}% (${notionalToAllocate.toFixed(2)} ${this.settle.toUpperCase()}) ` +
-      `@ mark ${markPrice} (leverage ${leverage}x from ${leverageSource}, ${positionMode} mode)`
-    );
-
     const order = {
       contract: contract,
       size: -contracts, // Negative for short
@@ -699,11 +730,20 @@ export class GateIOFuturesTrader {
       text: 't-short-entry', // Gate.io requires text to start with 't-'
       reduce_only: false
     };
+
+    console.log(
+      `[ORDER] SHORT ENTRY | Contract: ${contract} | Size: ${contracts} | ` +
+      `Notional: ${notionalToAllocate.toFixed(2)} ${this.settle.toUpperCase()} | ` +
+      `Mark: ${markPrice} | Leverage: ${leverage}x | Mode: ${positionMode}`
+    );
     
     try {
       const endpoint = `/api/v4/futures/${this.settle}/orders`;
-      return await this.request('POST', endpoint, order);
+      const result = await this.request('POST', endpoint, order);
+      console.log(`[ORDER] SHORT ENTRY SUCCESS | Order ID: ${result?.id || 'unknown'}`);
+      return result;
     } catch (error) {
+      console.error(`[ORDER] SHORT ENTRY FAILED | ${error.message}`);
       throw new Error(`Open short failed: ${error.message}`);
     }
   }
@@ -721,8 +761,13 @@ export class GateIOFuturesTrader {
       const isDualMode = mode === 'dual_long_short';
       const shortSize = this.getSideSize(position, 'short');
 
+      console.log(
+        `[ORDER] SHORT EXIT | Contract: ${contract} | Current Position: ${shortSize} | ` +
+        `Requested: ${requestedContracts} | Mode: ${mode || 'N/A'}`
+      );
+
       if (!position || shortSize <= 0) {
-        console.log('No short position to close');
+        console.warn(`[ORDER] No short position to close for ${contract}`);
         return {
           status: 'no_position',
           message: 'No short position to close'
@@ -730,52 +775,47 @@ export class GateIOFuturesTrader {
       }
 
       if (!requestedContracts || requestedContracts <= 0) {
+        console.warn(`[ORDER] Requested close size too small for ${contract}`);
         return {
           status: 'no_action',
           message: 'Requested close size is below minimum contract size'
         };
       }
-
-      console.log(`Position mode: ${isDualMode ? 'Dual (全仓)' : 'Single'} (source: ${mode || 'config'})`);
       
       let order;
+      let sizeToClose;
       
       if (isDualMode) {
-        // In dual mode, we need to place a counter order with reduce_only=true
-        // Use the smaller of contractsToClose or actual position size
-        const sizeToClose = Math.min(requestedContracts, Math.abs(shortSize));
-        
+        sizeToClose = Math.min(requestedContracts, Math.abs(shortSize));
         order = {
           contract: contract,
           size: sizeToClose, // Positive for buy to close short
           price: '0', // Market order
           tif: 'ioc',
           text: 't-short-exit',
-          reduce_only: true  // Important: reduce position only
+          reduce_only: true
         };
-        console.log(`Dual mode: Closing ${sizeToClose} contracts of short position`);
       } else {
-        // In single position mode, partial close with specific size
+        sizeToClose = requestedContracts;
         order = {
           contract: contract,
           size: requestedContracts,  // Positive for buy to close
           price: '0', // Market order
           tif: 'ioc',
           text: 't-short-exit',
-          reduce_only: true  // Use reduce_only for partial close
+          reduce_only: true
         };
-        console.log(`Single mode: Closing ${requestedContracts} contracts`);
       }
-      
-      console.log('Closing short position with order:', order);
+
+      console.log(`[ORDER] Closing ${sizeToClose} contracts (${isDualMode ? 'Dual' : 'Single'} mode)`);
       
       const endpoint = `/api/v4/futures/${this.settle}/orders`;
       const result = await this.request('POST', endpoint, order);
       
-      console.log('Close order result:', result);
+      console.log(`[ORDER] SHORT EXIT SUCCESS | Order ID: ${result?.id || 'unknown'} | Size: ${sizeToClose}`);
       return result;
     } catch (error) {
-      console.error('Close order error:', error.message);
+      console.error(`[ORDER] SHORT EXIT FAILED | ${contract}: ${error.message}`);
       throw new Error(`Close short failed: ${error.message}`);
     }
   }
@@ -791,11 +831,14 @@ export class GateIOFuturesTrader {
       const position = await this.request('GET', endpointSingle);
       const normalized = this.normalizePositionPayload(position, contract);
       if (normalized) {
+        console.log(
+          `[POSITION] ${contract} | Long: ${normalized.long_size || 0} | ` +
+          `Short: ${Math.abs(normalized.short_size || 0)} | Mode: ${normalized.mode || 'N/A'}`
+        );
         return normalized;
       }
     } catch (error) {
-      // If the contract-specific endpoint fails (e.g., 404 for no position), fall back to list
-      console.warn(`Single position fetch failed for ${contract}: ${error.message}`);
+      console.warn(`[POSITION] Single fetch failed for ${contract}, trying list endpoint`);
     }
 
     try {
@@ -805,7 +848,6 @@ export class GateIOFuturesTrader {
       if (Array.isArray(positions)) {
         const contractPositions = positions.filter(p => p.contract === contract);
         if (contractPositions.length > 0) {
-          console.log(`Found positions for ${contract}:`, contractPositions);
           const combined = contractPositions.reduce((acc, pos) => {
             const size = this.parseNumber(pos.size);
             if (size > 0) {
@@ -815,6 +857,10 @@ export class GateIOFuturesTrader {
             }
             return acc;
           }, { long: 0, short: 0 });
+
+          console.log(
+            `[POSITION] ${contract} | Long: ${combined.long} | Short: ${Math.abs(combined.short)}`
+          );
 
           return {
             contract,
@@ -826,10 +872,10 @@ export class GateIOFuturesTrader {
         }
       }
     } catch (fallbackError) {
-      console.warn(`Error fetching positions list: ${fallbackError.message}`);
+      console.warn(`[POSITION] List fetch failed: ${fallbackError.message}`);
     }
 
-    console.log(`No position found for ${contract}`);
+    console.log(`[POSITION] No position found for ${contract}`);
     return null;
   }
 
