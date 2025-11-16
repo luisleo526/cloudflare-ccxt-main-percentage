@@ -366,30 +366,30 @@ export class GateIOFuturesTrader {
   /**
    * Calculate number of contracts to open from percentage-based sizing
    */
-  async calculateContractsFromPercentage(symbol, amount, side = 'long') {
+  async calculateContractsFromPercentage(symbol, amount, side = 'long', leverage = null) {
     const percentage = this.normalizePercentage(amount);
     
     // Fetch futures account for balance only
     const futuresAccount = await this.getBalance();
     const futuresBalance = this.extractAvailableBalance(futuresAccount);
     
-    // Fetch margin account for leverage
-    const marginAccount = await this.getMarginAccount(symbol);
-    const marginLeverage = this.extractAccountLeverage(marginAccount);
+    // Use leverage from payload or fallback to default
+    const actualLeverage = leverage || this.defaultLeverage || 1;
+    const leverageSource = leverage ? 'payload' : 'default';
 
     console.log(
       `[CALCULATE] Symbol: ${symbol} | Side: ${side} | Allocation: ${(percentage * 100).toFixed(2)}% | ` +
-      `Futures Balance: ${futuresBalance} ${this.settle.toUpperCase()} | Margin Leverage: ${marginLeverage ?? 'n/a'}x`
+      `Futures Balance: ${futuresBalance} ${this.settle.toUpperCase()} | Leverage: ${actualLeverage}x (${leverageSource})`
     );
     
     if (futuresBalance <= 0) {
       console.error(`[CALCULATE] No futures account balance available`);
       throw new Error('No available futures account balance. Please transfer funds to your futures account.');
     }
-
-    // Determine leverage (try margin first, then fallback to default)
-    const fallbackLeverage = marginLeverage || null;
-    const fallbackSource = marginLeverage ? 'margin' : null;
+    
+    if (!actualLeverage || actualLeverage <= 0) {
+      throw new Error('Invalid leverage value. Leverage must be greater than 0.');
+    }
 
     const contract = this.parseSymbol(symbol);
     const contractInfo = await this.getContract(symbol);
@@ -411,21 +411,15 @@ export class GateIOFuturesTrader {
     }
 
     const position = await this.getPosition(symbol);
-    const { value: leverage, source: leverageSource } = this.resolveLeverageForSide(
-      position,
-      fallbackLeverage,
-      fallbackSource,
-      side
-    );
     const positionMode = this.determinePositionMode(position);
 
-    const notionalToAllocate = percentage * futuresBalance * leverage;
+    const notionalToAllocate = percentage * futuresBalance * actualLeverage;
     const baseAmount = notionalToAllocate / markPrice;
     const rawContracts = baseAmount / contractSize;
     const contracts = Math.floor(rawContracts);
 
     console.log(
-      `[CALCULATE] Contract: ${contract} | Leverage: ${leverage}x (${leverageSource}) | ` +
+      `[CALCULATE] Contract: ${contract} | Leverage: ${actualLeverage}x (${leverageSource}) | ` +
       `Mode: ${positionMode} | Mark Price: ${markPrice} | Contract Size: ${contractSize}`
     );
     console.log(
@@ -445,7 +439,7 @@ export class GateIOFuturesTrader {
       markPrice,
       baseAmount,
       notionalToAllocate,
-      leverage,
+      leverage: actualLeverage,
       leverageSource,
       percentage,
       positionMode
@@ -626,13 +620,13 @@ export class GateIOFuturesTrader {
   /**
    * Open long position (Buy to open)
    */
-  async marketBuy(symbol, amount) {
-    const { contract, contracts, positionMode, markPrice, notionalToAllocate, baseAmount, leverage, leverageSource, percentage } =
-      await this.calculateContractsFromPercentage(symbol, amount, 'long');
+  async marketBuy(symbol, amount, leverage = null) {
+    const { contract, contracts, positionMode, markPrice, notionalToAllocate, baseAmount, leverage: usedLeverage, leverageSource, percentage } =
+      await this.calculateContractsFromPercentage(symbol, amount, 'long', leverage);
 
     const order = {
       contract: contract,
-      size: contracts,
+      size: contracts, // Positive for long
       price: '0', // Market order
       tif: 'ioc', // Immediate or cancel
       text: 't-long-entry', // Gate.io requires text to start with 't-'
@@ -640,9 +634,9 @@ export class GateIOFuturesTrader {
     };
 
     console.log(
-      `[ORDER] LONG ENTRY | Contract: ${contract} | Size: ${contracts} | ` +
+      `[ORDER] LONG ENTRY | Contract: ${contract} | Size: +${contracts} | ` +
       `Notional: ${notionalToAllocate.toFixed(2)} ${this.settle.toUpperCase()} | ` +
-      `Mark: ${markPrice} | Leverage: ${leverage}x | Mode: ${positionMode}`
+      `Mark: ${markPrice} | Leverage: ${usedLeverage}x | Mode: ${positionMode}`
     );
     
     try {
@@ -731,23 +725,23 @@ export class GateIOFuturesTrader {
   /**
    * Open short position (Sell to open)
    */
-  async openShort(symbol, amount) {
-    const { contract, contracts, positionMode, markPrice, notionalToAllocate, baseAmount, leverage, leverageSource, percentage } =
-      await this.calculateContractsFromPercentage(symbol, amount, 'short');
+  async openShort(symbol, amount, leverage = null) {
+    const { contract, contracts, positionMode, markPrice, notionalToAllocate, baseAmount, leverage: usedLeverage, leverageSource, percentage } =
+      await this.calculateContractsFromPercentage(symbol, amount, 'short', leverage);
 
     const order = {
       contract: contract,
       size: -contracts, // Negative for short
       price: '0', // Market order
-      tif: 'ioc',
+      tif: 'ioc', // Immediate or cancel
       text: 't-short-entry', // Gate.io requires text to start with 't-'
       reduce_only: false
     };
 
     console.log(
-      `[ORDER] SHORT ENTRY | Contract: ${contract} | Size: ${contracts} | ` +
+      `[ORDER] SHORT ENTRY | Contract: ${contract} | Size: -${contracts} | ` +
       `Notional: ${notionalToAllocate.toFixed(2)} ${this.settle.toUpperCase()} | ` +
-      `Mark: ${markPrice} | Leverage: ${leverage}x | Mode: ${positionMode}`
+      `Mark: ${markPrice} | Leverage: ${usedLeverage}x | Mode: ${positionMode}`
     );
     
     try {

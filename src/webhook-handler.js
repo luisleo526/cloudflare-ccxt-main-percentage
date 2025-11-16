@@ -3,15 +3,13 @@ import { TestModeFuturesTrader } from './test-mode-futures.js';
 
 /**
  * Handle incoming webhook from TradingView for perpetual futures trading
- * @param {Object} payload - Webhook payload { action, amount, symbol }
+ * @param {Object} payload - Webhook payload { action, amount, symbol, leverage }
  * @param {Object} env - Environment variables
  */
 export async function handleWebhook(payload, env) {
-  const { action, amount, symbol, validateOnly } = payload;
+  const { action, amount, symbol, leverage, validateOnly } = payload;
   
-  // Note: Leverage should be pre-configured in user's Gate.io account
-  
-  console.log(`Processing futures webhook: ${action} with ${amount}% allocation on ${symbol}`);
+  console.log(`Processing futures webhook: ${action} with ${amount}% allocation on ${symbol} @ ${leverage}x leverage`);
   
   // Check if we're in test mode
   const isTestMode = env.TEST_MODE === 'true';
@@ -51,7 +49,7 @@ export async function handleWebhook(payload, env) {
     switch (action) {
       case 'long_entry':
         // Long entry = Buy contracts to open long position
-        result = await trader.marketBuy(symbol, amount);
+        result = await trader.marketBuy(symbol, amount, leverage);
         break;
         
       case 'long_exit':
@@ -61,7 +59,7 @@ export async function handleWebhook(payload, env) {
         
       case 'short_entry':
         // Short entry = Sell contracts to open short position
-        result = await trader.openShort(symbol, amount);
+        result = await trader.openShort(symbol, amount, leverage);
         break;
         
       case 'short_exit':

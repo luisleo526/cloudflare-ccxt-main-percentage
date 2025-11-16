@@ -20,24 +20,27 @@ export async function validateRequest(request, env, payload = null) {
   // Check IP whitelist if enabled
   if (env.ENABLE_IP_WHITELIST === 'true') {
     if (!clientIP || !tradingViewIPs.includes(clientIP)) {
-      console.log(`Rejected request from IP: ${clientIP}`);
+      console.log(`[AUTH] Rejected request from unauthorized IP: ${clientIP || 'unknown'}`);
       return {
         valid: false,
-        error: `Unauthorized IP address. Enable IP whitelisting for production.`
+        error: `Unauthorized IP address: ${clientIP || 'unknown'}`
       };
     }
-    console.log(`Accepted request from TradingView IP: ${clientIP}`);
+    console.log(`[AUTH] ✓ Accepted request from TradingView IP: ${clientIP}`);
   }
 
   // Option 2: Check for secret in payload
   if (env.WEBHOOK_SECRET && payload) {
     if (payload.secret !== env.WEBHOOK_SECRET) {
+      console.log(`[AUTH] Rejected - Invalid or missing secret token`);
       return {
         valid: false,
         error: 'Invalid or missing secret token'
       };
     }
+    console.log(`[AUTH] ✓ Secret token validated`);
   }
 
+  console.log(`[AUTH] ✓ Request authorized`);
   return { valid: true };
 }
