@@ -375,10 +375,8 @@ export class GateIOFuturesTrader {
   async setLeverage(symbol, leverage = null) {
     const contract = this.parseSymbol(symbol);
     const endpoint = `/api/v4/futures/${this.settle}/positions/${contract}/leverage`;
-    const data = {
-      leverage: leverage || this.defaultLeverage || 1
-    };
-    return await this.request('POST', endpoint, data);
+    const params = `leverage=${leverage}`;
+    return await this.request('POST', endpoint, null, params);
   }
 
 
@@ -618,7 +616,7 @@ export class GateIOFuturesTrader {
       throw new Error(`Failed to get contract info: ${error.message}`);
     }
   }
-  
+
   /**
    * Open long position (Buy to open)
    */
