@@ -15,6 +15,68 @@ export class GateIOFuturesTrader {
   }
 
   /**
+   * Create a per-request context for memoizing expensive API calls
+   */
+  createRequestContext(metadata = {}) {
+    return {
+      metadata,
+      caches: {
+        contracts: new Map(),
+        positions: new Map(),
+        balances: new Map(),
+        marginAccounts: new Map(),
+        contractAccounts: new Map()
+      }
+    };
+  }
+
+  /**
+   * Retrieve (or lazily create) a cache store for a bucket
+   */
+  getCacheStore(requestContext, bucket) {
+    if (!requestContext) {
+      return null;
+    }
+    if (!requestContext.caches) {
+      requestContext.caches = {};
+    }
+    if (!requestContext.caches[bucket]) {
+      requestContext.caches[bucket] = new Map();
+    }
+    return requestContext.caches[bucket];
+  }
+
+  /**
+   * Memoize async fetchers inside the request context
+   */
+  async getCachedValue(requestContext, bucket, key, fetcher) {
+    if (!requestContext) {
+      return fetcher();
+    }
+
+    const store = this.getCacheStore(requestContext, bucket);
+    if (!store) {
+      return fetcher();
+    }
+
+    if (store.has(key)) {
+      return store.get(key);
+    }
+
+    const pending = Promise.resolve().then(fetcher);
+    store.set(key, pending);
+
+    try {
+      const value = await pending;
+      store.set(key, value);
+      return value;
+    } catch (error) {
+      store.delete(key);
+      throw error;
+    }
+  }
+
+  /**
    * Convert string to ArrayBuffer
    */
   str2ab(str) {
@@ -383,11 +445,11 @@ export class GateIOFuturesTrader {
   /**
    * Calculate number of contracts to open from percentage-based sizing
    */
-  async calculateContractsFromPercentage(symbol, amount, side = 'long', leverage = null) {
+  async calculateContractsFromPercentage(symbol, amount, side = 'long', leverage = null, requestContext = null) {
     const percentage = this.normalizePercentage(amount);
     
     // Fetch futures account for balance only
-    const futuresAccount = await this.getBalance();
+    const futuresAccount = await this.getBalance(requestContext);
     const futuresBalance = this.extractAvailableBalance(futuresAccount);
     
     // Use leverage from payload or fallback to default
@@ -410,7 +472,7 @@ export class GateIOFuturesTrader {
     }
 
     const contract = this.parseSymbol(symbol);
-    const contractInfo = await this.getContract(symbol);
+    const contractInfo = await this.getContract(symbol, requestContext);
     const contractSize = this.parseNumber(
       contractInfo?.quanto_multiplier ?? contractInfo?.contract_size,
       0
@@ -430,7 +492,7 @@ export class GateIOFuturesTrader {
       throw new Error(`Unable to determine mark price for ${symbol}`);
     }
 
-    const position = await this.getPosition(symbol);
+    const position = await this.getPosition(symbol, requestContext);
     const positionMode = this.determinePositionMode(position);
 
     const notionalToAllocate = percentage * futuresBalance * actualLeverage;
@@ -469,8 +531,8 @@ export class GateIOFuturesTrader {
   /**
    * Convert base currency amount to number of contracts for closing logic
    */
-  async convertBaseAmountToContracts(symbol, amount) {
-    const contractInfo = await this.getContract(symbol);
+  async convertBaseAmountToContracts(symbol, amount, requestContext = null) {
+    const contractInfo = await this.getContract(symbol, requestContext);
     const contractSize = this.parseNumber(
       contractInfo?.quanto_multiplier ?? contractInfo?.contract_size,
       0
@@ -599,31 +661,33 @@ export class GateIOFuturesTrader {
   /**
    * Get futures contract details
    */
-  async getContract(symbol) {
+  async getContract(symbol, requestContext = null) {
     const contract = this.parseSymbol(symbol);
     const endpoint = `/api/v4/futures/${this.settle}/contracts/${contract}`;
     
-    try {
-      const result = await this.request('GET', endpoint);
-      const contractSize = this.parseNumber(result?.quanto_multiplier ?? result?.contract_size, 0);
-      const markPrice = this.parseNumber(result?.mark_price || result?.last_price || result?.index_price, 0);
-      
-      console.log(
-        `[CONTRACT] ${contract} | Size: ${contractSize} | Mark Price: ${markPrice} | ` +
-        `Min Order: ${result?.order_size_min || 'n/a'} | Max Order: ${result?.order_size_max || 'n/a'}`
-      );
-      
-      return result;
-    } catch (error) {
-      console.error(`[CONTRACT] Failed to get contract info for ${contract}: ${error.message}`);
-      throw new Error(`Failed to get contract info: ${error.message}`);
-    }
+    return this.getCachedValue(requestContext, 'contracts', contract, async () => {
+      try {
+        const result = await this.request('GET', endpoint);
+        const contractSize = this.parseNumber(result?.quanto_multiplier ?? result?.contract_size, 0);
+        const markPrice = this.parseNumber(result?.mark_price || result?.last_price || result?.index_price, 0);
+        
+        console.log(
+          `[CONTRACT] ${contract} | Size: ${contractSize} | Mark Price: ${markPrice} | ` +
+          `Min Order: ${result?.order_size_min || 'n/a'} | Max Order: ${result?.order_size_max || 'n/a'}`
+        );
+        
+        return result;
+      } catch (error) {
+        console.error(`[CONTRACT] Failed to get contract info for ${contract}: ${error.message}`);
+        throw new Error(`Failed to get contract info: ${error.message}`);
+      }
+    });
   }
 
   /**
    * Open long position (Buy to open)
    */
-  async marketBuy(symbol, amount, leverage = null) {
+  async marketBuy(symbol, amount, leverage = null, requestContext = null) {
     try{
       await this.setIsolatedMargin(symbol);
       console.log(`[ORDER] Set isolated margin and leverage for ${symbol}`);
@@ -641,7 +705,7 @@ export class GateIOFuturesTrader {
     }
     
     const { contract, contracts, positionMode, markPrice, notionalToAllocate, baseAmount, leverage: usedLeverage, leverageSource, percentage } =
-      await this.calculateContractsFromPercentage(symbol, amount, 'long', leverage);
+      await this.calculateContractsFromPercentage(symbol, amount, 'long', leverage, requestContext);
 
     const order = {
       contract: contract,
@@ -672,12 +736,12 @@ export class GateIOFuturesTrader {
   /**
    * Close long position (Sell to close)
    */
-  async marketSell(symbol, amount) {
+  async marketSell(symbol, amount, requestContext = null) {
     const contract = this.parseSymbol(symbol);
     
     try {
-      const position = await this.getPosition(symbol);
-      const { contracts: requestedContracts } = await this.convertBaseAmountToContracts(symbol, amount);
+      const position = await this.getPosition(symbol, requestContext);
+      const { contracts: requestedContracts } = await this.convertBaseAmountToContracts(symbol, amount, requestContext);
       const mode = this.determinePositionMode(position);
       const isDualMode = mode === 'dual_long_short';
       const longSize = this.getSideSize(position, 'long');
@@ -744,7 +808,7 @@ export class GateIOFuturesTrader {
   /**
    * Open short position (Sell to open)
    */
-  async openShort(symbol, amount, leverage = null) {
+  async openShort(symbol, amount, leverage = null, requestContext = null) {
     try{
       await this.setIsolatedMargin(symbol);
       console.log(`[ORDER] Set isolated margin and leverage for ${symbol}`);
@@ -762,7 +826,7 @@ export class GateIOFuturesTrader {
     }
     
     const { contract, contracts, positionMode, markPrice, notionalToAllocate, baseAmount, leverage: usedLeverage, leverageSource, percentage } =
-      await this.calculateContractsFromPercentage(symbol, amount, 'short', leverage);
+      await this.calculateContractsFromPercentage(symbol, amount, 'short', leverage, requestContext);
 
     const order = {
       contract: contract,
@@ -793,12 +857,12 @@ export class GateIOFuturesTrader {
   /**
    * Close short position (Buy to close)
    */
-  async closeShort(symbol, amount) {
+  async closeShort(symbol, amount, requestContext = null) {
     const contract = this.parseSymbol(symbol);
     
     try {
-      const position = await this.getPosition(symbol);
-      const { contracts: requestedContracts } = await this.convertBaseAmountToContracts(symbol, amount);
+      const position = await this.getPosition(symbol, requestContext);
+      const { contracts: requestedContracts } = await this.convertBaseAmountToContracts(symbol, amount, requestContext);
       const mode = this.determinePositionMode(position);
       const isDualMode = mode === 'dual_long_short';
       const shortSize = this.getSideSize(position, 'short');
@@ -865,60 +929,62 @@ export class GateIOFuturesTrader {
   /**
    * Get current position for a contract
    */
-  async getPosition(symbol) {
+  async getPosition(symbol, requestContext = null) {
     const contract = this.parseSymbol(symbol);
     
-    try {
-      const endpointSingle = `/api/v4/futures/${this.settle}/positions/${contract}`;
-      const position = await this.request('GET', endpointSingle);
-      const normalized = this.normalizePositionPayload(position, contract);
-      if (normalized) {
-        console.log(
-          `[POSITION] ${contract} | Long: ${normalized.long_size || 0} | ` +
-          `Short: ${Math.abs(normalized.short_size || 0)} | Mode: ${normalized.mode || 'N/A'}`
-        );
-        return normalized;
-      }
-    } catch (error) {
-      console.warn(`[POSITION] Single fetch failed for ${contract}, trying list endpoint`);
-    }
-
-    try {
-      const endpointAll = `/api/v4/futures/${this.settle}/positions`;
-      const positions = await this.request('GET', endpointAll);
-
-      if (Array.isArray(positions)) {
-        const contractPositions = positions.filter(p => p.contract === contract);
-        if (contractPositions.length > 0) {
-          const combined = contractPositions.reduce((acc, pos) => {
-            const size = this.parseNumber(pos.size);
-            if (size > 0) {
-              acc.long += size;
-            } else if (size < 0) {
-              acc.short += size;
-            }
-            return acc;
-          }, { long: 0, short: 0 });
-
+    return this.getCachedValue(requestContext, 'positions', contract, async () => {
+      try {
+        const endpointSingle = `/api/v4/futures/${this.settle}/positions/${contract}`;
+        const position = await this.request('GET', endpointSingle);
+        const normalized = this.normalizePositionPayload(position, contract);
+        if (normalized) {
           console.log(
-            `[POSITION] ${contract} | Long: ${combined.long} | Short: ${Math.abs(combined.short)}`
+            `[POSITION] ${contract} | Long: ${normalized.long_size || 0} | ` +
+            `Short: ${Math.abs(normalized.short_size || 0)} | Mode: ${normalized.mode || 'N/A'}`
           );
-
-          return {
-            contract,
-            long_size: combined.long,
-            short_size: combined.short,
-            size: combined.long + combined.short,
-            positions: contractPositions
-          };
+          return normalized;
         }
+      } catch (error) {
+        console.warn(`[POSITION] Single fetch failed for ${contract}, trying list endpoint`);
       }
-    } catch (fallbackError) {
-      console.warn(`[POSITION] List fetch failed: ${fallbackError.message}`);
-    }
 
-    console.log(`[POSITION] No position found for ${contract}`);
-    return null;
+      try {
+        const endpointAll = `/api/v4/futures/${this.settle}/positions`;
+        const positions = await this.request('GET', endpointAll);
+
+        if (Array.isArray(positions)) {
+          const contractPositions = positions.filter(p => p.contract === contract);
+          if (contractPositions.length > 0) {
+            const combined = contractPositions.reduce((acc, pos) => {
+              const size = this.parseNumber(pos.size);
+              if (size > 0) {
+                acc.long += size;
+              } else if (size < 0) {
+                acc.short += size;
+              }
+              return acc;
+            }, { long: 0, short: 0 });
+
+            console.log(
+              `[POSITION] ${contract} | Long: ${combined.long} | Short: ${Math.abs(combined.short)}`
+            );
+
+            return {
+              contract,
+              long_size: combined.long,
+              short_size: combined.short,
+              size: combined.long + combined.short,
+              positions: contractPositions
+            };
+          }
+        }
+      } catch (fallbackError) {
+        console.warn(`[POSITION] List fetch failed: ${fallbackError.message}`);
+      }
+
+      console.log(`[POSITION] No position found for ${contract}`);
+      return null;
+    });
   }
 
   /**
@@ -941,24 +1007,27 @@ export class GateIOFuturesTrader {
   /**
    * Get account balance
    */
-  async getBalance() {
+  async getBalance(requestContext = null) {
     const endpoint = `/api/v4/futures/${this.settle}/accounts`;
+    const cacheKey = `${this.settle}_futures_balance`;
     
-    try {
-      const result = await this.request('GET', endpoint);
-      const available = this.extractAvailableBalance(result);
-      const leverage = this.extractAccountLeverage(result);
-      
-      console.log(
-        `[BALANCE] Futures Account | Available: ${available} ${this.settle.toUpperCase()} | ` +
-        `Leverage: ${leverage ?? 'n/a'}x`
-      );
-      
-      return result;
-    } catch (error) {
-      console.error(`[BALANCE] Failed to fetch futures account balance: ${error.message}`);
-      throw new Error(`Failed to fetch balance: ${error.message}`);
-    }
+    return this.getCachedValue(requestContext, 'balances', cacheKey, async () => {
+      try {
+        const result = await this.request('GET', endpoint);
+        const available = this.extractAvailableBalance(result);
+        const leverage = this.extractAccountLeverage(result);
+        
+        console.log(
+          `[BALANCE] Futures Account | Available: ${available} ${this.settle.toUpperCase()} | ` +
+          `Leverage: ${leverage ?? 'n/a'}x`
+        );
+        
+        return result;
+      } catch (error) {
+        console.error(`[BALANCE] Failed to fetch futures account balance: ${error.message}`);
+        throw new Error(`Failed to fetch balance: ${error.message}`);
+      }
+    });
   }
 
   /**

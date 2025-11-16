@@ -41,9 +41,13 @@ export async function handleWebhook(payload, env, context = {}) {
   }
   logger.info(`Trader ready | mode: ${isTestMode ? 'TEST' : 'LIVE'} | settle: ${options.settle} | positionMode: ${options.positionMode} | defaultLeverage: ${options.defaultLeverage}`);
 
+  const requestContext = typeof trader.createRequestContext === 'function'
+    ? trader.createRequestContext({ action, symbol, requestId: context.requestId })
+    : null;
+
   if (validateOnly) {
     try {
-      await trader.getContract(symbol);
+      await trader.getContract(symbol, requestContext);
       return { status: 'validated' };
     } catch (validationError) {
       throw new Error(`Invalid symbol ${symbol}: ${validationError.message}`);
@@ -56,22 +60,22 @@ export async function handleWebhook(payload, env, context = {}) {
     switch (action) {
       case 'long_entry':
         // Long entry = Buy contracts to open long position
-        result = await trader.marketBuy(symbol, amount, leverage);
+        result = await trader.marketBuy(symbol, amount, leverage, requestContext);
         break;
         
       case 'long_exit':
         // Long exit = Sell contracts to close long position
-        result = await trader.marketSell(symbol, amount);
+        result = await trader.marketSell(symbol, amount, requestContext);
         break;
         
       case 'short_entry':
         // Short entry = Sell contracts to open short position
-        result = await trader.openShort(symbol, amount, leverage);
+        result = await trader.openShort(symbol, amount, leverage, requestContext);
         break;
         
       case 'short_exit':
         // Short exit = Buy contracts to close short position
-        result = await trader.closeShort(symbol, amount);
+        result = await trader.closeShort(symbol, amount, requestContext);
         break;
         
       default:
