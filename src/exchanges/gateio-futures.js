@@ -369,19 +369,22 @@ export class GateIOFuturesTrader {
   async calculateContractsFromPercentage(symbol, amount, side = 'long') {
     const percentage = this.normalizePercentage(amount);
     
-    // Fetch margin account for both balance and leverage
+    // Fetch futures account for balance only
+    const futuresAccount = await this.getBalance();
+    const futuresBalance = this.extractAvailableBalance(futuresAccount);
+    
+    // Fetch margin account for leverage
     const marginAccount = await this.getMarginAccount(symbol);
     const marginLeverage = this.extractAccountLeverage(marginAccount);
-    const marginBalance = this.extractMarginAvailableBalance(marginAccount);
 
     console.log(
       `[CALCULATE] Symbol: ${symbol} | Side: ${side} | Allocation: ${(percentage * 100).toFixed(2)}% | ` +
-      `Margin Balance: ${marginBalance} ${this.settle.toUpperCase()} | Leverage: ${marginLeverage ?? 'n/a'}x`
+      `Futures Balance: ${futuresBalance} ${this.settle.toUpperCase()} | Margin Leverage: ${marginLeverage ?? 'n/a'}x`
     );
     
-    if (marginBalance <= 0) {
-      console.error(`[CALCULATE] No margin balance available for ${symbol}`);
-      throw new Error('No available margin balance. Please transfer funds to your margin account for this symbol.');
+    if (futuresBalance <= 0) {
+      console.error(`[CALCULATE] No futures account balance available`);
+      throw new Error('No available futures account balance. Please transfer funds to your futures account.');
     }
 
     // Determine leverage (try margin first, then fallback to default)
@@ -416,7 +419,7 @@ export class GateIOFuturesTrader {
     );
     const positionMode = this.determinePositionMode(position);
 
-    const notionalToAllocate = percentage * marginBalance * leverage;
+    const notionalToAllocate = percentage * futuresBalance * leverage;
     const baseAmount = notionalToAllocate / markPrice;
     const rawContracts = baseAmount / contractSize;
     const contracts = Math.floor(rawContracts);
@@ -432,7 +435,7 @@ export class GateIOFuturesTrader {
 
     if (!contracts || contracts <= 0) {
       console.error(`[CALCULATE] Calculated contracts is zero for ${symbol}`);
-      throw new Error('Calculated order size is zero. Increase percentage or ensure sufficient margin balance.');
+      throw new Error('Calculated order size is zero. Increase percentage or ensure sufficient futures account balance.');
     }
 
     return {
@@ -587,8 +590,18 @@ export class GateIOFuturesTrader {
     const endpoint = `/api/v4/futures/${this.settle}/contracts/${contract}`;
     
     try {
-      return await this.request('GET', endpoint);
+      const result = await this.request('GET', endpoint);
+      const contractSize = this.parseNumber(result?.quanto_multiplier ?? result?.contract_size, 0);
+      const markPrice = this.parseNumber(result?.mark_price || result?.last_price || result?.index_price, 0);
+      
+      console.log(
+        `[CONTRACT] ${contract} | Size: ${contractSize} | Mark Price: ${markPrice} | ` +
+        `Min Order: ${result?.order_size_min || 'n/a'} | Max Order: ${result?.order_size_max || 'n/a'}`
+      );
+      
+      return result;
     } catch (error) {
+      console.error(`[CONTRACT] Failed to get contract info for ${contract}: ${error.message}`);
       throw new Error(`Failed to get contract info: ${error.message}`);
     }
   }
@@ -886,8 +899,12 @@ export class GateIOFuturesTrader {
     const endpoint = `/api/v4/futures/${this.settle}/positions`;
     
     try {
-      return await this.request('GET', endpoint);
+      const result = await this.request('GET', endpoint);
+      const count = Array.isArray(result) ? result.length : 0;
+      console.log(`[POSITION] Retrieved ${count} position(s)`);
+      return result;
     } catch (error) {
+      console.error(`[POSITION] Failed to fetch all positions: ${error.message}`);
       throw new Error(`Failed to fetch positions: ${error.message}`);
     }
   }
@@ -899,8 +916,18 @@ export class GateIOFuturesTrader {
     const endpoint = `/api/v4/futures/${this.settle}/accounts`;
     
     try {
-      return await this.request('GET', endpoint);
+      const result = await this.request('GET', endpoint);
+      const available = this.extractAvailableBalance(result);
+      const leverage = this.extractAccountLeverage(result);
+      
+      console.log(
+        `[BALANCE] Futures Account | Available: ${available} ${this.settle.toUpperCase()} | ` +
+        `Leverage: ${leverage ?? 'n/a'}x`
+      );
+      
+      return result;
     } catch (error) {
+      console.error(`[BALANCE] Failed to fetch futures account balance: ${error.message}`);
       throw new Error(`Failed to fetch balance: ${error.message}`);
     }
   }
@@ -912,8 +939,13 @@ export class GateIOFuturesTrader {
     try {
       const endpoint = `/api/v4/futures/${this.settle}/orders`;
       const params = symbol ? `contract=${this.parseSymbol(symbol)}&status=open` : 'status=open';
-      return await this.request('GET', endpoint, null, params);
+      const result = await this.request('GET', endpoint, null, params);
+      const count = Array.isArray(result) ? result.length : 0;
+      const contractInfo = symbol ? ` for ${this.parseSymbol(symbol)}` : '';
+      console.log(`[ORDERS] Retrieved ${count} open order(s)${contractInfo}`);
+      return result;
     } catch (error) {
+      console.error(`[ORDERS] Failed to fetch open orders: ${error.message}`);
       throw new Error(`Failed to fetch open orders: ${error.message}`);
     }
   }
@@ -925,8 +957,12 @@ export class GateIOFuturesTrader {
     const endpoint = `/api/v4/futures/${this.settle}/orders/${orderId}`;
     
     try {
-      return await this.request('DELETE', endpoint);
+      console.log(`[ORDERS] Cancelling order ${orderId}`);
+      const result = await this.request('DELETE', endpoint);
+      console.log(`[ORDERS] Order ${orderId} cancelled successfully`);
+      return result;
     } catch (error) {
+      console.error(`[ORDERS] Failed to cancel order ${orderId}: ${error.message}`);
       throw new Error(`Failed to cancel order: ${error.message}`);
     }
   }
