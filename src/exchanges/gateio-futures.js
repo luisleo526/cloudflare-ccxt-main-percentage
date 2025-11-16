@@ -340,7 +340,8 @@ export class GateIOFuturesTrader {
 
     try {
       const result = await this.request('GET', endpoint, null, params);
-
+      console.log(`[MARGIN] Account fetch result for ${currencyPair}:`, result);
+      
       if (Array.isArray(result)) {
         const found = result.find(item => item?.currency_pair === currencyPair) || result[0] || null;
         if (found) {
@@ -351,7 +352,6 @@ export class GateIOFuturesTrader {
 
       if (result && (result.currency_pair === currencyPair || !result.currency_pair)) {
         console.log(`[MARGIN] Account found for ${currencyPair}`);
-        console.log(result);
         return result;
       }
     } catch (error) {

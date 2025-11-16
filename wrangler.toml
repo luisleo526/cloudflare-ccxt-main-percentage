@@ -19,8 +19,8 @@ POSITION_MODE = "dual_long_short"
 
 # Optional KV Namespaces for storing logs and rate limiting
 # Create these with:
-# wrangler kv:namespace create "TRADE_LOGS"
-# wrangler kv:namespace create "RATE_LIMITER"
+# wrangler kv namespace create "TRADE_LOGS"
+# wrangler kv namespace create "RATE_LIMITER"
 
 [[kv_namespaces]]
 binding = "TRADE_LOGS"
@@ -30,11 +30,6 @@ id = "c4703ef6b8af4580aef4d05c75edd030"
 binding = "RATE_LIMITER"
 id = "7b51f7b49e7f425da20e99150f6cab58"
 
-# Uncomment to use a custom domain
-# routes = [
-#   { pattern = "webhook.yourdomain.com/*", custom_domain = true }
-# ]
-
 # Development settings
 [dev]
 port = 8787
@@ -42,3 +37,11 @@ local_protocol = "http"
 
 [observability.logs]
 enabled = true
+head_sampling_rate = 1
+invocation_logs = true
+persist = true
+
+[observability.traces]
+enabled = false
+persist = true
+head_sampling_rate = 1
