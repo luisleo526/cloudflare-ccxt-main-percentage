@@ -4,6 +4,14 @@ main = "src/index.js"
 compatibility_date = "2024-11-12"
 compatibility_flags = ["nodejs_compat"]
 
+[[durable_objects.bindings]]
+name = "SYMBOL_EXECUTOR"
+class_name = "SymbolExecutor"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["SymbolExecutor"]
+
 [vars]
 ENABLE_IP_WHITELIST = "false"
 FUTURES_SETTLE = "usdt"

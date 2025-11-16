@@ -184,9 +184,9 @@ export default {
         return response;
       }
 
-      // Handle the webhook and execute trade
-      logger.info(`[WEBHOOK] ✓ Validation passed, executing trade...`);
-      const result = await handleWebhook(payload, env, context);
+      // Handle the webhook via Durable Object and execute trade sequentially per symbol
+      logger.info(`[WEBHOOK] ✓ Validation passed, routing to Durable Object executor...`);
+      const result = await executeTradeViaDurableObject(payload, env, context);
       
       logger.info(`[WEBHOOK] ✓ Trade executed successfully`);
       const response = new Response(JSON.stringify({
@@ -217,3 +217,49 @@ export default {
     }
   }
 };
+
+async function executeTradeViaDurableObject(payload, env, context) {
+  if (!env.SYMBOL_EXECUTOR) {
+    throw new Error('Durable Object binding SYMBOL_EXECUTOR is not configured');
+  }
+
+  if (!payload?.symbol) {
+    throw new Error('Symbol is required to execute trade');
+  }
+
+  const symbolKey = payload.symbol.toUpperCase();
+  const id = env.SYMBOL_EXECUTOR.idFromName(symbolKey);
+  const stub = env.SYMBOL_EXECUTOR.get(id);
+
+  const response = await stub.fetch('https://symbol-executor/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      payload,
+      context: {
+        requestId: context?.requestId,
+        logPrefix: context?.logPrefix
+      }
+    })
+  });
+
+  let resultBody = null;
+  try {
+    resultBody = await response.json();
+  } catch (error) {
+    // Ignore JSON errors; handle via status below
+  }
+
+  if (!response.ok) {
+    const errorMessage = resultBody?.error || `Durable Object error (status ${response.status})`;
+    throw new Error(errorMessage);
+  }
+
+  if (!resultBody?.success) {
+    throw new Error(resultBody?.error || 'Durable Object execution failed');
+  }
+
+  return resultBody.data;
+}
+
+export { SymbolExecutor } from './durable-objects/symbol-executor.js';
