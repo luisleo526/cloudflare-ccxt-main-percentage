@@ -1,4 +1,5 @@
 name = "tradingview-gate-webhook"
+account_id = "cd9eceaa891fe8b1bdf7da893a231203"
 main = "src/index.js"
 compatibility_date = "2024-11-12"
 compatibility_flags = ["nodejs_compat"]
