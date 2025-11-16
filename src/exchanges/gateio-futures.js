@@ -362,6 +362,25 @@ export class GateIOFuturesTrader {
     return null;
   }
 
+  async setIsolatedMargin(symbol) {
+    const contract = this.parseSymbol(symbol);
+    const endpoint = `/api/v4/futures/${this.settle}/positions/cross_mode`;
+    const data = {
+      mode: "ISOLATED",
+      contract: contract
+    };
+    return await this.request('POST', endpoint, data);
+  }
+
+  async setLeverage(symbol, leverage = null) {
+    const contract = this.parseSymbol(symbol);
+    const endpoint = `/api/v4/futures/${this.settle}/positions/${contract}/leverage`;
+    const data = {
+      leverage: leverage || this.defaultLeverage || 1
+    };
+    return await this.request('POST', endpoint, data);
+  }
+
 
   /**
    * Calculate number of contracts to open from percentage-based sizing
@@ -599,28 +618,13 @@ export class GateIOFuturesTrader {
       throw new Error(`Failed to get contract info: ${error.message}`);
     }
   }
-
-  /**
-   * Set leverage for a contract (DEPRECATED - users should set leverage in Gate.io account)
-   * @deprecated Users should configure leverage directly in their Gate.io account
-   */
-  async setLeverage(symbol, leverage = null) {
-    console.warn('setLeverage is deprecated. Users should configure leverage in their Gate.io account.');
-    return null;
-    // Original implementation kept for reference:
-    // const contract = this.parseSymbol(symbol);
-    // const endpoint = `/api/v4/futures/${this.settle}/positions/${contract}/leverage`;
-    // const data = {
-    //   leverage: leverage || this.leverage,
-    //   cross_leverage_limit: 0
-    // };
-    // return await this.request('POST', endpoint, data);
-  }
-
+  
   /**
    * Open long position (Buy to open)
    */
   async marketBuy(symbol, amount, leverage = null) {
+    await this.setIsolatedMargin(symbol);
+    await this.setLeverage(symbol, leverage);
     const { contract, contracts, positionMode, markPrice, notionalToAllocate, baseAmount, leverage: usedLeverage, leverageSource, percentage } =
       await this.calculateContractsFromPercentage(symbol, amount, 'long', leverage);
 
@@ -726,6 +730,8 @@ export class GateIOFuturesTrader {
    * Open short position (Sell to open)
    */
   async openShort(symbol, amount, leverage = null) {
+    await this.setIsolatedMargin(symbol);
+    await this.setLeverage(symbol, leverage);
     const { contract, contracts, positionMode, markPrice, notionalToAllocate, baseAmount, leverage: usedLeverage, leverageSource, percentage } =
       await this.calculateContractsFromPercentage(symbol, amount, 'short', leverage);
 
