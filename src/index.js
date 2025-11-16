@@ -91,6 +91,19 @@ export default {
 
       payload.amount = amountValue;
 
+      // Validate symbol exists on Gate.io futures
+      try {
+        await handleWebhook({ ...payload, validateOnly: true }, env);
+      } catch (validationError) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: validationError.message
+        }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
       // Handle the webhook and execute trade
       const result = await handleWebhook(payload, env);
       

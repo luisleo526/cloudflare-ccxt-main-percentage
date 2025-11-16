@@ -7,7 +7,7 @@ import { TestModeFuturesTrader } from './test-mode-futures.js';
  * @param {Object} env - Environment variables
  */
 export async function handleWebhook(payload, env) {
-  const { action, amount, symbol } = payload;
+  const { action, amount, symbol, validateOnly } = payload;
   
   // Note: Leverage should be pre-configured in user's Gate.io account
   
@@ -34,6 +34,15 @@ export async function handleWebhook(payload, env) {
       throw new Error('Gate.io API credentials not configured. Please set GATE_API_KEY and GATE_API_SECRET or enable TEST_MODE.');
     }
     trader = new GateIOFuturesTrader(env.GATE_API_KEY, env.GATE_API_SECRET, options);
+  }
+
+  if (validateOnly) {
+    try {
+      await trader.getContract(symbol);
+      return { status: 'validated' };
+    } catch (validationError) {
+      throw new Error(`Invalid symbol ${symbol}: ${validationError.message}`);
+    }
   }
   
   try {
