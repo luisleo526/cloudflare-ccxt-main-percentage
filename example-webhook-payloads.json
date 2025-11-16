@@ -1,0 +1,79 @@
+{
+  "examples": [
+    {
+      "description": "Open a long position on BTC perpetual futures",
+      "payload": {
+        "action": "long_entry",
+        "amount": 10,
+        "symbol": "BTC/USDT"
+      },
+      "note": "Amount is a percentage of available balance. Sends 10% of your available USDT (scaled by leverage and contract size)"
+    },
+    {
+      "description": "Close a long position on BTC perpetual futures",
+      "payload": {
+        "action": "long_exit",
+        "amount": 0.01,
+        "symbol": "BTC/USDT"
+      },
+      "note": "Closes 0.01 BTC of the long position (partial close)"
+    },
+    {
+      "description": "Open a short position on BTC perpetual futures",
+      "payload": {
+        "action": "short_entry",
+        "amount": 10,
+        "symbol": "BTC/USDT"
+      },
+      "note": "Uses 10% of available balance (after leverage) to determine how many contracts to sell short"
+    },
+    {
+      "description": "Close a short position on BTC perpetual futures",
+      "payload": {
+        "action": "short_exit",
+        "amount": 0.01,
+        "symbol": "BTC/USDT"
+      },
+      "note": "Closes 0.01 BTC of the short position by buying back contracts"
+    },
+    {
+      "description": "Dynamic TradingView alert with placeholders",
+      "tradingview_alert_message": {
+        "action": "{{strategy.order.action}}",
+        "amount": "{{strategy.position_size}}",
+        "symbol": "{{ticker}}"
+      },
+      "note": "Use this format in TradingView's alert message box with your strategy"
+    },
+    {
+      "description": "With secret token for authentication (optional)",
+      "payload": {
+        "action": "long_entry",
+        "amount": 10,
+        "symbol": "BTC/USDT",
+        "secret": "your-secret-token-here"
+      },
+      "note": "Add secret field if WEBHOOK_SECRET is configured for extra security"
+    }
+  ],
+  "tradingview_setup": {
+    "step1": "Create an alert on your strategy/indicator",
+    "step2": "In the 'Settings' tab, enable 'Webhook URL'",
+    "step3": "Enter your Cloudflare Worker URL",
+    "step4": "In the 'Message' field, enter the JSON payload",
+    "webhook_url_dev": "http://localhost:8787",
+    "webhook_url_prod": "https://tradingview-gate-webhook.YOUR-SUBDOMAIN.workers.dev"
+  },
+  "supported_symbols": [
+    "BTC/USDT",
+    "ETH/USDT",
+    "BNB/USDT",
+    "XRP/USDT",
+    "ADA/USDT",
+    "SOL/USDT",
+    "DOT/USDT",
+    "DOGE/USDT",
+    "AVAX/USDT",
+    "MATIC/USDT"
+  ]
+}
