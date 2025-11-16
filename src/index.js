@@ -44,7 +44,7 @@ export default {
       // Validate payload structure
       const requiredFields = ['action', 'amount', 'symbol'];
       for (const field of requiredFields) {
-        if (!payload[field]) {
+        if (payload[field] === undefined || payload[field] === null || payload[field] === '') {
           return new Response(JSON.stringify({
             success: false,
             error: `Missing required field: ${field}`
@@ -66,6 +66,30 @@ export default {
           headers: { 'Content-Type': 'application/json' }
         });
       }
+
+      // Validate amount range
+      const amountValue = Number(payload.amount);
+      if (!Number.isFinite(amountValue)) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'Amount must be a numeric value'
+        }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (amountValue <= 0 || amountValue > 100) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'Amount must be greater than 0 and less than or equal to 100'
+        }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      payload.amount = amountValue;
 
       // Handle the webhook and execute trade
       const result = await handleWebhook(payload, env);
