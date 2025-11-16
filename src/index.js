@@ -4,17 +4,31 @@ import { withRateLimit } from './middleware/rate-limiter.js';
 
 export default {
   async fetch(request, env, ctx) {
-    console.log(`[WEBHOOK] Incoming ${request.method} request from ${request.headers.get('CF-Connecting-IP') || 'unknown'}`);
+    const requestId =
+      request.headers.get('CF-Ray') ||
+      (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
+    const logPrefix = `[REQ ${requestId}]`;
+    const logger = {
+      info: (message, ...args) => console.log(`${logPrefix} ${message}`, ...args),
+      warn: (message, ...args) => console.warn(`${logPrefix} ${message}`, ...args),
+      error: (message, ...args) => console.error(`${logPrefix} ${message}`, ...args)
+    };
+    const context = { requestId, logPrefix };
+
+    logger.info(`[WEBHOOK] Incoming ${request.method} request from ${request.headers.get('CF-Connecting-IP') || 'unknown'}`);
     
     // Only accept POST requests
     if (request.method !== 'POST') {
-      return new Response(JSON.stringify({
+      logger.warn(`[WEBHOOK] Method not allowed: ${request.method}`);
+      const response = new Response(JSON.stringify({
         success: false,
         error: 'Method not allowed. Only POST requests are accepted.'
       }), { 
         status: 405,
         headers: { 'Content-Type': 'application/json' }
       });
+      logger.info(`[WEBHOOK] Response sent with status 405`);
+      return response;
     }
 
     // Apply rate limiting
@@ -24,7 +38,7 @@ export default {
     });
     
     if (rateLimitResult.status === 429) {
-      console.warn(`[WEBHOOK] Rate limit exceeded`);
+      logger.warn(`[WEBHOOK] Rate limit exceeded`);
       return rateLimitResult;
     }
 
@@ -33,81 +47,93 @@ export default {
       let payload;
       try {
         payload = await request.json();
-        console.log(`[WEBHOOK] Payload parsed successfully:`, JSON.stringify(payload));
+        logger.info(`[WEBHOOK] Payload parsed successfully: ${JSON.stringify(payload)}`);
       } catch (parseError) {
-        console.error(`[WEBHOOK] Failed to parse JSON payload: ${parseError.message}`);
-        return new Response(JSON.stringify({
+        logger.error(`[WEBHOOK] Failed to parse JSON payload: ${parseError.message}`);
+        const response = new Response(JSON.stringify({
           success: false,
           error: 'Invalid JSON payload'
         }), {
           status: 400,
           headers: { 'Content-Type': 'application/json' }
         });
+        logger.info(`[WEBHOOK] Response sent with status 400 (invalid JSON)`);
+        return response;
       }
       
       // Validate the request with payload for secret checking
       const validationResult = await validateRequest(request, env, payload);
       if (!validationResult.valid) {
-        console.error(`[WEBHOOK] Authentication failed: ${validationResult.error}`);
-        return new Response(JSON.stringify({
+        logger.error(`[WEBHOOK] Authentication failed: ${validationResult.error}`);
+        const response = new Response(JSON.stringify({
           success: false,
           error: validationResult.error
         }), { 
           status: 401,
           headers: { 'Content-Type': 'application/json' }
         });
+        logger.info(`[WEBHOOK] Response sent with status 401 (auth failed)`);
+        return response;
       }
       
       // Validate payload structure
       const requiredFields = ['action', 'amount', 'symbol', 'leverage'];
       for (const field of requiredFields) {
         if (payload[field] === undefined || payload[field] === null || payload[field] === '') {
-          console.error(`[WEBHOOK] Validation failed: Missing required field '${field}'`);
-          return new Response(JSON.stringify({
+          logger.error(`[WEBHOOK] Validation failed: Missing required field '${field}'`);
+          const response = new Response(JSON.stringify({
             success: false,
             error: `Missing required field: ${field}`
           }), { 
             status: 400,
             headers: { 'Content-Type': 'application/json' }
           });
+          logger.info(`[WEBHOOK] Response sent with status 400 (missing ${field})`);
+          return response;
         }
       }
 
       // Validate action type
       const validActions = ['long_entry', 'long_exit', 'short_entry', 'short_exit'];
       if (!validActions.includes(payload.action)) {
-        console.error(`[WEBHOOK] Validation failed: Invalid action '${payload.action}'`);
-        return new Response(JSON.stringify({
+        logger.error(`[WEBHOOK] Validation failed: Invalid action '${payload.action}'`);
+        const response = new Response(JSON.stringify({
           success: false,
           error: `Invalid action: ${payload.action}. Must be one of: ${validActions.join(', ')}`
         }), { 
           status: 400,
           headers: { 'Content-Type': 'application/json' }
         });
+        logger.info(`[WEBHOOK] Response sent with status 400 (invalid action)`);
+        return response;
       }
 
       // Validate amount range
       const amountValue = Number(payload.amount);
       if (!Number.isFinite(amountValue)) {
-        console.error(`[WEBHOOK] Validation failed: Amount '${payload.amount}' is not numeric`);
-        return new Response(JSON.stringify({
+        logger.error(`[WEBHOOK] Validation failed: Amount '${payload.amount}' is not numeric`);
+        const response = new Response(JSON.stringify({
           success: false,
           error: 'Amount must be a numeric value'
         }), {
           status: 400,
           headers: { 'Content-Type': 'application/json' }
         });
+        logger.info(`[WEBHOOK] Response sent with status 400 (amount NaN)`);
+        return response;
       }
 
       if (amountValue <= 0 || amountValue > 100) {
-        console.error(`[WEBHOOK] Validation failed: Amount ${amountValue} out of range (0-100)`);
-        return new Response(JSON.stringify({
+        logger.error(`[WEBHOOK] Validation failed: Amount ${amountValue} out of range (0-100)`);
+        const response = new Response(JSON.stringify({
           success: false,
           error: 'Amount must be greater than 0 and less than or equal to 100'
         }), {
           status: 400,
           headers: { 'Content-Type': 'application/json' }
         });
+        logger.info(`[WEBHOOK] Response sent with status 400 (amount range)`);
+        return response;
       }
 
       payload.amount = amountValue;
@@ -115,49 +141,55 @@ export default {
       // Validate leverage
       const leverageValue = Number(payload.leverage);
       if (!Number.isFinite(leverageValue)) {
-        console.error(`[WEBHOOK] Validation failed: Leverage '${payload.leverage}' is not numeric`);
-        return new Response(JSON.stringify({
+        logger.error(`[WEBHOOK] Validation failed: Leverage '${payload.leverage}' is not numeric`);
+        const response = new Response(JSON.stringify({
           success: false,
           error: 'Leverage must be a numeric value'
         }), {
           status: 400,
           headers: { 'Content-Type': 'application/json' }
         });
+        logger.info(`[WEBHOOK] Response sent with status 400 (leverage NaN)`);
+        return response;
       }
 
       if (leverageValue <= 0 || leverageValue > 125) {
-        console.error(`[WEBHOOK] Validation failed: Leverage ${leverageValue} out of range (1-125)`);
-        return new Response(JSON.stringify({
+        logger.error(`[WEBHOOK] Validation failed: Leverage ${leverageValue} out of range (1-125)`);
+        const response = new Response(JSON.stringify({
           success: false,
           error: 'Leverage must be between 1 and 125'
         }), {
           status: 400,
           headers: { 'Content-Type': 'application/json' }
         });
+        logger.info(`[WEBHOOK] Response sent with status 400 (leverage range)`);
+        return response;
       }
 
       payload.leverage = leverageValue;
 
       // Validate symbol exists on Gate.io futures
       try {
-        await handleWebhook({ ...payload, validateOnly: true }, env);
+        await handleWebhook({ ...payload, validateOnly: true }, env, context);
       } catch (validationError) {
-        console.error(`[WEBHOOK] Symbol validation failed: ${validationError.message}`);
-        return new Response(JSON.stringify({
+        logger.error(`[WEBHOOK] Symbol validation failed: ${validationError.message}`);
+        const response = new Response(JSON.stringify({
           success: false,
           error: validationError.message
         }), {
           status: 400,
           headers: { 'Content-Type': 'application/json' }
         });
+        logger.info(`[WEBHOOK] Response sent with status 400 (symbol validation)`);
+        return response;
       }
 
       // Handle the webhook and execute trade
-      console.log(`[WEBHOOK] ✓ Validation passed, executing trade...`);
-      const result = await handleWebhook(payload, env);
+      logger.info(`[WEBHOOK] ✓ Validation passed, executing trade...`);
+      const result = await handleWebhook(payload, env, context);
       
-      console.log(`[WEBHOOK] ✓ Trade executed successfully`);
-      return new Response(JSON.stringify({
+      logger.info(`[WEBHOOK] ✓ Trade executed successfully`);
+      const response = new Response(JSON.stringify({
         success: true,
         data: result
       }), {
@@ -167,9 +199,11 @@ export default {
           ...(rateLimitResult.headers || {})
         }
       });
+      logger.info(`[WEBHOOK] Response sent with status 200`);
+      return response;
     } catch (error) {
-      console.error(`[WEBHOOK] Error processing webhook:`, error.message);
-      return new Response(JSON.stringify({
+      logger.error(`[WEBHOOK] Error processing webhook: ${error.message}`);
+      const response = new Response(JSON.stringify({
         success: false,
         error: error.message
       }), {
@@ -178,6 +212,8 @@ export default {
           'Content-Type': 'application/json'
         }
       });
+      logger.error(`[WEBHOOK] Response sent with status 500`);
+      return response;
     }
   }
 };

@@ -405,6 +405,7 @@ export class GateIOFuturesTrader {
     }
     
     if (!actualLeverage || actualLeverage <= 0) {
+      console.error(`[CALCULATE] Invalid leverage value. Leverage must be greater than 0.`);
       throw new Error('Invalid leverage value. Leverage must be greater than 0.');
     }
 
@@ -420,10 +421,12 @@ export class GateIOFuturesTrader {
     );
 
     if (contractSize <= 0) {
+      console.error(`[CALCULATE] Unable to determine contract size for ${symbol}`);
       throw new Error(`Unable to determine contract size for ${symbol}`);
     }
 
     if (markPrice <= 0) {
+      console.error(`[CALCULATE] Unable to determine mark price for ${symbol}`);
       throw new Error(`Unable to determine mark price for ${symbol}`);
     }
 

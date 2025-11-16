@@ -6,10 +6,16 @@ import { TestModeFuturesTrader } from './test-mode-futures.js';
  * @param {Object} payload - Webhook payload { action, amount, symbol, leverage }
  * @param {Object} env - Environment variables
  */
-export async function handleWebhook(payload, env) {
+export async function handleWebhook(payload, env, context = {}) {
   const { action, amount, symbol, leverage, validateOnly } = payload;
+  const logPrefix = context.logPrefix || '[WEBHOOK]';
+  const logger = {
+    info: (message, ...args) => console.log(`${logPrefix} ${message}`, ...args),
+    warn: (message, ...args) => console.warn(`${logPrefix} ${message}`, ...args),
+    error: (message, ...args) => console.error(`${logPrefix} ${message}`, ...args)
+  };
   
-  console.log(`Processing futures webhook: ${action} with ${amount}% allocation on ${symbol} @ ${leverage}x leverage`);
+  logger.info(`Processing futures webhook: ${action} with ${amount}% allocation on ${symbol} @ ${leverage}x leverage`);
   
   // Check if we're in test mode
   const isTestMode = env.TEST_MODE === 'true';
@@ -24,7 +30,7 @@ export async function handleWebhook(payload, env) {
   // Initialize trader
   let trader;
   if (isTestMode) {
-    console.warn('⚠️ Running in TEST MODE (Futures) - No real trades will be executed');
+    logger.warn('⚠️ Running in TEST MODE (Futures) - No real trades will be executed');
     trader = new TestModeFuturesTrader(options);
   } else {
     // Ensure API credentials are present for live trading
@@ -33,6 +39,7 @@ export async function handleWebhook(payload, env) {
     }
     trader = new GateIOFuturesTrader(env.GATE_API_KEY, env.GATE_API_SECRET, options);
   }
+  logger.info(`Trader ready | mode: ${isTestMode ? 'TEST' : 'LIVE'} | settle: ${options.settle} | positionMode: ${options.positionMode} | defaultLeverage: ${options.defaultLeverage}`);
 
   if (validateOnly) {
     try {
@@ -72,14 +79,18 @@ export async function handleWebhook(payload, env) {
     }
     
     // Log the trade
-    await logTrade({
+    const tradeLog = {
       timestamp: new Date().toISOString(),
       action,
       symbol,
       amount,
       result,
-      status: 'success'
-    }, env);
+      status: 'success',
+      requestId: context.requestId
+    };
+    await logTrade(tradeLog, env, context);
+    
+    logger.info(formatActionSummary(action, symbol, result));
     
     return {
       action,
@@ -96,8 +107,11 @@ export async function handleWebhook(payload, env) {
       symbol,
       amount,
       error: error.message,
-      status: 'error'
-    }, env);
+      status: 'error',
+      requestId: context.requestId
+    }, env, context);
+    
+    logger.error(`Action failed: ${action} on ${symbol} | ${error.message}`);
     
     throw error;
   }
@@ -106,7 +120,8 @@ export async function handleWebhook(payload, env) {
 /**
  * Log trade to KV storage or external service
  */
-async function logTrade(tradeData, env) {
+async function logTrade(tradeData, env, context = {}) {
+  const logPrefix = context.logPrefix || '[TRADE]';
   // If you have KV namespace configured
   if (env.TRADE_LOGS) {
     const key = `trade_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -116,5 +131,23 @@ async function logTrade(tradeData, env) {
   }
   
   // Also log to console for debugging
-  console.log('Trade executed:', JSON.stringify(tradeData, null, 2));
+  console.log(`${logPrefix} Trade record:`, JSON.stringify(tradeData, null, 2));
+}
+
+function formatActionSummary(action, symbol, result) {
+  if (!result) {
+    return `[RESULT] ${action} on ${symbol} completed without exchange response payload`;
+  }
+  
+  const orderId = result?.id || result?.order_id || result?.order?.id || result?.text || 'n/a';
+  const size =
+    result?.size ??
+    result?.contracts ??
+    result?.requestedContracts ??
+    result?.order?.size ??
+    result?.update?.size ??
+    'n/a';
+  const status = result?.status || result?.label || result?.message || 'success';
+  
+  return `[RESULT] ${action} on ${symbol} | status: ${status} | orderId: ${orderId} | size: ${size}`;
 }
