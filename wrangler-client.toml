@@ -9,7 +9,7 @@ class_name = "SymbolExecutor"
 
 [[migrations]]
 tag = "v1"
-new_classes = ["SymbolExecutor"]
+new_sqlite_classes = ["SymbolExecutor"]
 
 [vars]
 ENABLE_IP_WHITELIST = "true"
