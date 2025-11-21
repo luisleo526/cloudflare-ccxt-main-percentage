@@ -688,13 +688,13 @@ export class GateIOFuturesTrader {
    * Open long position (Buy to open)
    */
   async marketBuy(symbol, amount, leverage = null, requestContext = null) {
-    try{
-      await this.setIsolatedMargin(symbol);
-      console.log(`[ORDER] Set isolated margin and leverage for ${symbol}`);
-    } catch (error) {
-      // do not need to throw error here, just log it
-      console.log(`[ORDER] Failed to set isolated margin or leverage: ${error.message}`);
-    }
+    // try{
+    //   await this.setIsolatedMargin(symbol);
+    //   console.log(`[ORDER] Set isolated margin and leverage for ${symbol}`);
+    // } catch (error) {
+    //   // do not need to throw error here, just log it
+    //   console.log(`[ORDER] Failed to set isolated margin or leverage: ${error.message}`);
+    // }
 
     try{
       await this.setLeverage(symbol, leverage);
@@ -809,13 +809,13 @@ export class GateIOFuturesTrader {
    * Open short position (Sell to open)
    */
   async openShort(symbol, amount, leverage = null, requestContext = null) {
-    try{
-      await this.setIsolatedMargin(symbol);
-      console.log(`[ORDER] Set isolated margin and leverage for ${symbol}`);
-    } catch (error) {
-      // do not need to throw error here, just log it
-      console.log(`[ORDER] Failed to set isolated margin or leverage: ${error.message}`);
-    }
+    // try{
+    //   await this.setIsolatedMargin(symbol);
+    //   console.log(`[ORDER] Set isolated margin and leverage for ${symbol}`);
+    // } catch (error) {
+    //   // do not need to throw error here, just log it
+    //   console.log(`[ORDER] Failed to set isolated margin or leverage: ${error.message}`);
+    // }
 
     try{
       await this.setLeverage(symbol, leverage);
