@@ -19,6 +19,8 @@ FUTURES_SETTLE = "usdt"
 # - "single": Single position mode - Can only hold one direction at a time
 # Recommended: "dual_long_short" for more flexible trading strategies
 POSITION_MODE = "dual_long_short"
+# Margin mode preference for futures orders ("cross", "isolated", or unset to skip auto-switching)
+MARGIN_MODE = "cross"
 
 # These will be set as secrets using:
 # wrangler secret put GATE_API_KEY
