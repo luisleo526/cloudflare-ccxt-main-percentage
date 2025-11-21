@@ -12,6 +12,17 @@ export class GateIOFuturesTrader {
     this.settle = options.settle || 'usdt'; // Settlement currency (usdt or btc)
     this.positionMode = options.positionMode || 'dual_long_short'; // dual_long_short for cross margin
     this.defaultLeverage = options.defaultLeverage || 1;
+    const allowedMarginModes = ['CROSS', 'ISOLATED'];
+    const requestedMarginMode = typeof options.marginMode === 'string'
+      ? options.marginMode.toUpperCase()
+      : options.marginMode;
+    if (allowedMarginModes.includes(requestedMarginMode)) {
+      this.marginModePreference = requestedMarginMode;
+    } else if (options.marginMode === null || options.marginMode === false) {
+      this.marginModePreference = null;
+    } else {
+      this.marginModePreference = 'CROSS';
+    }
   }
 
   /**
@@ -424,14 +435,46 @@ export class GateIOFuturesTrader {
     return null;
   }
 
-  async setIsolatedMargin(symbol) {
+  async setMarginMode(symbol, mode = this.marginModePreference) {
+    const desiredMode = typeof mode === 'string' ? mode.toUpperCase() : null;
+    if (!desiredMode) {
+      console.log(`[MARGIN] No margin mode preference configured; skipping update for ${symbol}`);
+      return null;
+    }
+    const allowedMarginModes = ['CROSS', 'ISOLATED'];
+    if (!allowedMarginModes.includes(desiredMode)) {
+      throw new Error(`Unsupported margin mode: ${desiredMode}`);
+    }
     const contract = this.parseSymbol(symbol);
     const endpoint = `/api/v4/futures/${this.settle}/positions/cross_mode`;
     const data = {
-      mode: "ISOLATED",
+      mode: desiredMode,
       contract: contract
     };
-    return await this.request('POST', endpoint, data);
+    const result = await this.request('POST', endpoint, data);
+    console.log(`[MARGIN] Set ${desiredMode} margin for ${contract}, result: ${JSON.stringify(result)}`);
+    return result;
+  }
+
+  async setMarginModeUnderHedgeMode(symbol, mode = this.marginModePreference) {
+    const desiredMode = typeof mode === 'string' ? mode.toUpperCase() : null;
+    if (!desiredMode) {
+      console.log(`[MARGIN] No margin mode preference configured; skipping update for ${symbol}`);
+      return null;
+    }
+    const allowedMarginModes = ['CROSS', 'ISOLATED'];
+    if (!allowedMarginModes.includes(desiredMode)) {
+      throw new Error(`Unsupported margin mode: ${desiredMode}`);
+    }
+    const contract = this.parseSymbol(symbol);
+    const endpoint = `/api/v4/futures/${this.settle}/dual_comp/positions/cross_mode`;
+    const data = {
+      mode: desiredMode,
+      contract: contract
+    };
+    const result = await this.request('POST', endpoint, data);
+    console.log(`[MARGIN] Set ${desiredMode} margin for ${contract} (HedgeMode), result: ${JSON.stringify(result)}`);
+    return result;
   }
 
   async setLeverage(symbol, leverage = null) {
@@ -688,13 +731,25 @@ export class GateIOFuturesTrader {
    * Open long position (Buy to open)
    */
   async marketBuy(symbol, amount, leverage = null, requestContext = null) {
-    // try{
-    //   await this.setIsolatedMargin(symbol);
-    //   console.log(`[ORDER] Set isolated margin and leverage for ${symbol}`);
-    // } catch (error) {
-    //   // do not need to throw error here, just log it
-    //   console.log(`[ORDER] Failed to set isolated margin or leverage: ${error.message}`);
-    // }
+    try{
+      await this.setMarginMode(symbol);
+      if (this.marginModePreference) {
+        console.log(`[ORDER] Ensured ${this.marginModePreference.toUpperCase()} margin for ${symbol}`);
+      }
+    } catch (error) {
+      // do not need to throw error here, just log it
+      console.log(`[ORDER] Failed to set margin mode: ${error.message}`);
+    }
+
+    try{
+      await this.setMarginModeUnderHedgeMode(symbol);
+      if (this.marginModePreference) {
+        console.log(`[ORDER] Ensured ${this.marginModePreference.toUpperCase()} margin for ${symbol} (HedgeMode)`);
+      }
+    } catch (error) {
+      // do not need to throw error here, just log it
+      console.log(`[ORDER] Failed to set margin mode under hedge mode: ${error.message}`);
+    }
 
     try{
       await this.setLeverage(symbol, leverage);
@@ -809,13 +864,25 @@ export class GateIOFuturesTrader {
    * Open short position (Sell to open)
    */
   async openShort(symbol, amount, leverage = null, requestContext = null) {
-    // try{
-    //   await this.setIsolatedMargin(symbol);
-    //   console.log(`[ORDER] Set isolated margin and leverage for ${symbol}`);
-    // } catch (error) {
-    //   // do not need to throw error here, just log it
-    //   console.log(`[ORDER] Failed to set isolated margin or leverage: ${error.message}`);
-    // }
+    try{
+      await this.setMarginMode(symbol);
+      if (this.marginModePreference) {
+        console.log(`[ORDER] Ensured ${this.marginModePreference.toUpperCase()} margin for ${symbol}`);
+      }
+    } catch (error) {
+      // do not need to throw error here, just log it
+      console.log(`[ORDER] Failed to set margin mode: ${error.message}`);
+    }
+
+    try{
+      await this.setMarginModeUnderHedgeMode(symbol);
+      if (this.marginModePreference) {
+        console.log(`[ORDER] Ensured ${this.marginModePreference.toUpperCase()} margin for ${symbol} (HedgeMode)`);
+      }
+    } catch (error) {
+      // do not need to throw error here, just log it
+      console.log(`[ORDER] Failed to set margin mode under hedge mode: ${error.message}`);
+    }
 
     try{
       await this.setLeverage(symbol, leverage);

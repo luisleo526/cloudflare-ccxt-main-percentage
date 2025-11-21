@@ -24,7 +24,8 @@ export async function handleWebhook(payload, env, context = {}) {
   const options = {
     settle: env.FUTURES_SETTLE || 'usdt', // Settlement currency
     positionMode: env.POSITION_MODE || 'dual_long_short', // dual_long_short for cross margin (全仓)
-    defaultLeverage: env.DEFAULT_LEVERAGE ? Number(env.DEFAULT_LEVERAGE) : 1
+    defaultLeverage: env.DEFAULT_LEVERAGE ? Number(env.DEFAULT_LEVERAGE) : 1,
+    marginMode: env.MARGIN_MODE
   };
   
   // Initialize trader
