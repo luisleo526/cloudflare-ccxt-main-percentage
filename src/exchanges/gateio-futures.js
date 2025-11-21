@@ -477,11 +477,46 @@ export class GateIOFuturesTrader {
     return result;
   }
 
-  async setLeverage(symbol, leverage = null) {
+  async setLeverage(symbol, leverage = null, mode = this.marginModePreference) {
+    const desiredMode = typeof mode === 'string' ? mode.toUpperCase() : null;
+    if (!desiredMode) {
+      console.log(`[LEVERAGE] No margin mode preference configured; skipping update for ${symbol}`);
+      return null;
+    }
+    const allowedMarginModes = ['CROSS', 'ISOLATED'];
+    if (!allowedMarginModes.includes(desiredMode)) {
+      throw new Error(`Unsupported margin mode: ${desiredMode}`);
+    }
     const contract = this.parseSymbol(symbol);
     const endpoint = `/api/v4/futures/${this.settle}/positions/${contract}/leverage`;
-    const params = `leverage=${leverage}`;
-    return await this.request('POST', endpoint, null, params);
+    if (desiredMode === 'ISOLATED') {
+      const params = `leverage=${leverage}`;
+      return await this.request('POST', endpoint, null, params);
+    } else {
+      const params = `leverage=0&cross_leverage_limit=${leverage}`;
+      return await this.request('POST', endpoint, null, params);
+    }
+  }
+
+  async setLeverageUnderHedgeMode(symbol, leverage = null, mode = this.marginModePreference) {
+    const desiredMode = typeof mode === 'string' ? mode.toUpperCase() : null;
+    if (!desiredMode) {
+      console.log(`[LEVERAGE] No margin mode preference configured; skipping update for ${symbol}`);
+      return null;
+    }
+    const allowedMarginModes = ['CROSS', 'ISOLATED'];
+    if (!allowedMarginModes.includes(desiredMode)) {
+      throw new Error(`Unsupported margin mode: ${desiredMode}`);
+    }
+    const contract = this.parseSymbol(symbol);
+    const endpoint = `/api/v4/futures/${this.settle}/dual_comp/positions/${contract}/leverage`;
+    if (desiredMode === 'ISOLATED') {
+      const params = `leverage=${leverage}`;
+      return await this.request('POST', endpoint, null, params);
+    } else {
+      const params = `leverage=0&cross_leverage_limit=${leverage}`;
+      return await this.request('POST', endpoint, null, params);
+    }
   }
 
 
@@ -758,6 +793,14 @@ export class GateIOFuturesTrader {
       // do not need to throw error here, just log it
       console.log(`[ORDER] Failed to set leverage: ${error.message}`);
     }
+
+    try{
+      await this.setLeverageUnderHedgeMode(symbol, leverage);
+      console.log(`[ORDER] Set leverage for ${symbol} (HedgeMode)`);
+    } catch (error) {
+      // do not need to throw error here, just log it
+      console.log(`[ORDER] Failed to set leverage: ${error.message}`);
+    }
     
     const { contract, contracts, positionMode, markPrice, notionalToAllocate, baseAmount, leverage: usedLeverage, leverageSource, percentage } =
       await this.calculateContractsFromPercentage(symbol, amount, 'long', leverage, requestContext);
@@ -887,6 +930,14 @@ export class GateIOFuturesTrader {
     try{
       await this.setLeverage(symbol, leverage);
       console.log(`[ORDER] Set leverage for ${symbol}`);
+    } catch (error) {
+      // do not need to throw error here, just log it
+      console.log(`[ORDER] Failed to set leverage: ${error.message}`);
+    }
+
+    try{
+      await this.setLeverageUnderHedgeMode(symbol, leverage);
+      console.log(`[ORDER] Set leverage for ${symbol} (HedgeMode)`);
     } catch (error) {
       // do not need to throw error here, just log it
       console.log(`[ORDER] Failed to set leverage: ${error.message}`);

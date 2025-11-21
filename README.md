@@ -41,7 +41,21 @@ wrangler secret put WEBHOOK_SECRET
 # Enter a secret that you'll include in TradingView alerts
 ```
 
-### 3. Configure KV Namespace (Optional)
+### 3. Configure Trading Defaults
+
+Set your preferred futures defaults in `wrangler.toml`:
+
+```toml
+[vars]
+FUTURES_SETTLE = "usdt"          # Settlement currency
+POSITION_MODE = "dual_long_short" # dual position / cross margin
+MARGIN_MODE = "cross"            # "cross", "isolated", or omit to skip auto-switching
+DEFAULT_LEVERAGE = "3"           # Fallback leverage when payload doesn't specify
+```
+
+Leave `MARGIN_MODE` unset (or blank) if you do not want the worker to touch the cross/isolated toggle before each order.
+
+### 4. Configure KV Namespace (Optional)
 
 If you want to store trade logs, create a KV namespace:
 
